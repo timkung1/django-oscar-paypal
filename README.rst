@@ -2,6 +2,9 @@
 PayPal package for django-oscar
 ===============================
 
+**NOTE:** This package is forked from the original package and strives to
+provide compatibility with the latest Paypal REST APIs.
+
 This package provides integration between django-oscar_ and both `PayPal
 Express`_ and `PayPal Payflow Pro`_.
 
