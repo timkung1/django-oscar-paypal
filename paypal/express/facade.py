@@ -13,6 +13,8 @@ from paypal.express.gateway import (AUTHORIZATION, DO_EXPRESS_CHECKOUT, ORDER,
                                     refund_txn, set_txn)
 from paypal.express.models import ExpressTransaction as Transaction
 
+import paypalrestsdk
+
 
 def _get_payment_action():
     # PayPal supports 3 actions: 'Sale', 'Authorization', 'Order'
@@ -33,57 +35,121 @@ def get_paypal_url(basket, shipping_methods, user=None, shipping_address=None,
     given to PayPal directly - this is used within when using PayPal as a
     payment method.
     """
-    if basket.currency:
-        currency = basket.currency
+
+    # if basket.currency:
+    #     currency = basket.currency
+    # else:
+    #     currency = getattr(settings, 'PAYPAL_CURRENCY', 'GBP')
+    # if host is None:
+    #     host = Site.objects.get_current().domain
+    # if scheme is None:
+    #     use_https = getattr(settings, 'PAYPAL_CALLBACK_HTTPS', True)
+    #     scheme = 'https' if use_https else 'http'
+    # return_url = '%s://%s%s' % (
+    #     scheme, host, reverse('paypal-success-response', kwargs={
+    #         'basket_id': basket.id}))
+    # cancel_url = '%s://%s%s' % (
+    #     scheme, host, reverse('paypal-cancel-response', kwargs={
+    #         'basket_id': basket.id}))
+    #
+    # # URL for updating shipping methods - we only use this if we have a set of
+    # # shipping methods to choose between.
+    # update_url = None
+    # if shipping_methods:
+    #     update_url = '%s://%s%s' % (
+    #         scheme, host,
+    #         reverse('paypal-shipping-options',
+    #                 kwargs={'basket_id': basket.id}))
+    #
+    # # Determine whether a shipping address is required
+    # no_shipping = False
+    # if not basket.is_shipping_required():
+    #     no_shipping = True
+    #
+    # # Pass a default billing address is there is one.  This means PayPal can
+    # # pre-fill the registration form.
+    # address = None
+    # if user:
+    #     addresses = user.addresses.all().order_by('-is_default_for_billing')
+    #     if len(addresses):
+    #         address = addresses[0]
+    #
+    # return set_txn(basket=basket,
+    #                shipping_methods=shipping_methods,
+    #                currency=currency,
+    #                return_url=return_url,
+    #                cancel_url=cancel_url,
+    #                update_url=update_url,
+    #                action=_get_payment_action(),
+    #                shipping_method=shipping_method,
+    #                shipping_address=shipping_address,
+    #                user=user,
+    #                user_address=address,
+    #                no_shipping=no_shipping,
+    #                paypal_params=paypal_params)
+
+    items = []
+    for var in basket.all_lines():
+        brkdown = var.get_price_breakdown()
+        items.append({
+            "name": "item name here",
+            "description": "description here",
+            "quantity": str(brkdown[0][2]),
+            "price": str(brkdown[0][0]),
+            "tax": str(brkdown[0][1] - brkdown[0][0]),
+            "sku": "sku here",
+            "currency": "USD"
+        })
+
+        print("START BASKET:")
+        print(items)
+        print("END BASKET")
+
+    paypalrestsdk.configure({
+        "mode": "sandbox",
+        "client_id": "GOES HERE",
+        "client_secret": "GOES HERE"
+    })
+
+    payment = paypalrestsdk.Payment({
+        "intent": "sale",
+        "payer": {
+            "payment_method": "paypal"
+        },
+        "note_to_payer": "Contact us for any questions on your order.",
+        "redirect_urls": {
+            "return_url": "http://localhost:8000/checkout/paypal/preview/" + str(basket.id),
+            "cancel_url": "http://localhost:8000/"
+        },
+        "transactions": [{
+            "amount": {
+                "total": "10.00",
+                "currency": "USD",
+                "details": {
+                    "subtotal": "10.00",
+                    "tax": "0.00"
+                }
+            },
+            "description": "test sale to validate restapi",
+            "item_list": {
+                "items": items
+            }
+        }]
+    })
+    print(payment)
+
+    if payment.create():
+        for link in payment.links:
+            if link.method == "REDIRECT":
+                redirect_url = str(link.href)
+                return redirect_url
+
+
     else:
-        currency = getattr(settings, 'PAYPAL_CURRENCY', 'GBP')
-    if host is None:
-        host = Site.objects.get_current().domain
-    if scheme is None:
-        use_https = getattr(settings, 'PAYPAL_CALLBACK_HTTPS', True)
-        scheme = 'https' if use_https else 'http'
-    return_url = '%s://%s%s' % (
-        scheme, host, reverse('paypal-success-response', kwargs={
-            'basket_id': basket.id}))
-    cancel_url = '%s://%s%s' % (
-        scheme, host, reverse('paypal-cancel-response', kwargs={
-            'basket_id': basket.id}))
+        print("Error while creating payment:")
+        print(payment.error)
+        return "There'sAProblemGovna"
 
-    # URL for updating shipping methods - we only use this if we have a set of
-    # shipping methods to choose between.
-    update_url = None
-    if shipping_methods:
-        update_url = '%s://%s%s' % (
-            scheme, host,
-            reverse('paypal-shipping-options',
-                    kwargs={'basket_id': basket.id}))
-
-    # Determine whether a shipping address is required
-    no_shipping = False
-    if not basket.is_shipping_required():
-        no_shipping = True
-
-    # Pass a default billing address is there is one.  This means PayPal can
-    # pre-fill the registration form.
-    address = None
-    if user:
-        addresses = user.addresses.all().order_by('-is_default_for_billing')
-        if len(addresses):
-            address = addresses[0]
-
-    return set_txn(basket=basket,
-                   shipping_methods=shipping_methods,
-                   currency=currency,
-                   return_url=return_url,
-                   cancel_url=cancel_url,
-                   update_url=update_url,
-                   action=_get_payment_action(),
-                   shipping_method=shipping_method,
-                   shipping_address=shipping_address,
-                   user=user,
-                   user_address=address,
-                   no_shipping=no_shipping,
-                   paypal_params=paypal_params)
 
 
 def fetch_transaction_details(token):

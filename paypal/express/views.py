@@ -25,6 +25,9 @@ from paypal.express.exceptions import (EmptyBasketException, InvalidBasket,
 from paypal.express.facade import (confirm_transaction,
                                    fetch_transaction_details, get_paypal_url)
 
+import paypalrestsdk
+from paypalrestsdk import Payment
+
 # Load views dynamically
 PaymentDetailsView = get_class('checkout.views', 'PaymentDetailsView')
 CheckoutSessionMixin = get_class('checkout.session', 'CheckoutSessionMixin')
@@ -173,14 +176,21 @@ class SuccessResponseView(PaymentDetailsView):
         return []
 
     def get(self, request, *args, **kwargs):
+        paypalrestsdk.configure({
+            "mode": "sandbox",
+            "client_id": "GOES HERE",
+            "client_secret": "GOES HERE"
+        })
         """
         Fetch details about the successful transaction from PayPal.  We use
         these details to show a preview of the order with a 'submit' button to
         place it.
         """
         try:
+            print("GET: SuccessResponseView - views.py: can you see me?")
             self.payer_id = request.GET['PayerID']
             self.token = request.GET['token']
+            self.payment_id = request.GET['paymentId']
         except KeyError:
             # Manipulation - redirect to basket page with warning message
             logger.warning("Missing GET params on success response page")
@@ -190,7 +200,14 @@ class SuccessResponseView(PaymentDetailsView):
             return HttpResponseRedirect(reverse('basket:summary'))
 
         try:
-            self.txn = fetch_transaction_details(self.token)
+            # self.txn = fetch_transaction_details(self.token)
+            print("TOKEN:")
+            print(self.token)
+            print("END TOKEN")
+            self.payment = Payment.find(self.payment_id)
+            print("PAYMENT:")
+            print(self.payment)
+            print("END PAYMENT")
         except PayPalError as e:
             logger.warning(
                 "Unable to fetch transaction details for token %s: %s",
@@ -243,8 +260,8 @@ class SuccessResponseView(PaymentDetailsView):
         ctx.update({
             'payer_id': self.payer_id,
             'token': self.token,
-            'paypal_user_email': self.txn.value('EMAIL'),
-            'paypal_amount': D(self.txn.value('AMT')),
+            # 'paypal_user_email': self.txn.value('EMAIL'),
+            # 'paypal_amount': D(self.txn.value('AMT')),
         })
 
         return ctx
@@ -292,7 +309,7 @@ class SuccessResponseView(PaymentDetailsView):
         # Pass PP params
         submission['payment_kwargs']['payer_id'] = self.payer_id
         submission['payment_kwargs']['token'] = self.token
-        submission['payment_kwargs']['txn'] = self.txn
+        submission['payment_kwargs']['payment_id'] = self.payment_id
         return submission
 
     def handle_payment(self, order_number, total, **kwargs):
