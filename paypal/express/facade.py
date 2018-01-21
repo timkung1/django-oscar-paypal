@@ -2,6 +2,7 @@
 Responsible for briding between Oscar and the PayPal gateway
 """
 from __future__ import unicode_literals
+from decimal import *
 
 from django.conf import settings
 from django.contrib.sites.models import Site
@@ -87,8 +88,16 @@ def get_paypal_url(basket, shipping_methods, user=None, shipping_address=None,
     #                user_address=address,
     #                no_shipping=no_shipping,
     #                paypal_params=paypal_params)
+    print("BEGIN BASKET")
+    print(basket)
+    print("END BASKET")
+
+
 
     items = []
+    price = Decimal(0.0)
+    tax = Decimal(0.0)
+    total = Decimal(0.0)
     for var in basket.all_lines():
         brkdown = var.get_price_breakdown()
         items.append({
@@ -100,6 +109,9 @@ def get_paypal_url(basket, shipping_methods, user=None, shipping_address=None,
             "sku": "sku here",
             "currency": "USD"
         })
+        price = price + brkdown[0][0]
+        total = total + brkdown[0][1]
+        tax = tax + brkdown[0][1] - brkdown[0][0]
 
         print("START BASKET:")
         print(items)
@@ -107,8 +119,8 @@ def get_paypal_url(basket, shipping_methods, user=None, shipping_address=None,
 
     paypalrestsdk.configure({
         "mode": "sandbox",
-        "client_id": "GOES HERE",
-        "client_secret": "GOES HERE"
+        "client_id": settings.PAYPAL_CLIENT_ID,
+        "client_secret": settings.PAYPAL_CLIENT_SECRET
     })
 
     payment = paypalrestsdk.Payment({
@@ -123,11 +135,11 @@ def get_paypal_url(basket, shipping_methods, user=None, shipping_address=None,
         },
         "transactions": [{
             "amount": {
-                "total": "10.00",
+                "total": str(total),
                 "currency": "USD",
                 "details": {
-                    "subtotal": "10.00",
-                    "tax": "0.00"
+                    "subtotal": str(price),
+                    "tax": str(tax)
                 }
             },
             "description": "test sale to validate restapi",

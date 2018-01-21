@@ -178,8 +178,8 @@ class SuccessResponseView(PaymentDetailsView):
     def get(self, request, *args, **kwargs):
         paypalrestsdk.configure({
             "mode": "sandbox",
-            "client_id": "GOES HERE",
-            "client_secret": "GOES HERE"
+            "client_id": settings.PAYPAL_CLIENT_ID,
+            "client_secret": settings.PAYPAL_CLIENT_SECRET
         })
         """
         Fetch details about the successful transaction from PayPal.  We use
@@ -260,6 +260,7 @@ class SuccessResponseView(PaymentDetailsView):
         ctx.update({
             'payer_id': self.payer_id,
             'token': self.token,
+            'payment_id': self.payment_id
             # 'paypal_user_email': self.txn.value('EMAIL'),
             # 'paypal_amount': D(self.txn.value('AMT')),
         })
@@ -280,13 +281,16 @@ class SuccessResponseView(PaymentDetailsView):
         try:
             self.payer_id = request.POST['payer_id']
             self.token = request.POST['token']
+            self.payment_id = request.POST['payment_id']
         except KeyError:
             # Probably suspicious manipulation if we get here
+            print("IS THIS THE SPOT OF ERROR???")
             messages.error(self.request, error_msg)
             return HttpResponseRedirect(reverse('basket:summary'))
 
         try:
-            self.txn = fetch_transaction_details(self.token)
+            self.payment = Payment.find(self.payment_id)
+            #fetch_transaction_details(self.token)
         except PayPalError:
             # Unable to fetch txn details from PayPal - we have to bail out
             messages.error(self.request, error_msg)
@@ -305,7 +309,7 @@ class SuccessResponseView(PaymentDetailsView):
         submission = super(
             SuccessResponseView, self).build_submission(**kwargs)
         # Pass the user email so it can be stored with the order
-        submission['order_kwargs']['guest_email'] = self.txn.value('EMAIL')
+        submission['order_kwargs']['guest_email'] = self.payment['payer']['payer_info']['email']
         # Pass PP params
         submission['payment_kwargs']['payer_id'] = self.payer_id
         submission['payment_kwargs']['token'] = self.token
@@ -317,25 +321,36 @@ class SuccessResponseView(PaymentDetailsView):
         Complete payment with PayPal - this calls the 'DoExpressCheckout'
         method to capture the money from the initial transaction.
         """
-        try:
-            confirm_txn = confirm_transaction(
-                kwargs['payer_id'], kwargs['token'], kwargs['txn'].amount,
-                kwargs['txn'].currency)
-        except PayPalError:
-            raise UnableToTakePayment()
-        if not confirm_txn.is_successful:
+        print("django-oscar-paypal views.py CAN YOU SEE ME NOW??")
+        # try:
+            # confirm_txn = confirm_transaction(
+            #     kwargs['payer_id'], kwargs['token'], kwargs['txn'].amount,
+            #     kwargs['txn'].currency)
+        # except PayPalError:
+        #     raise UnableToTakePayment()
+        # if not confirm_txn.is_successful:
+        #     raise UnableToTakePayment()
+
+        if self.payment.execute({"payer_id": self.payer_id}):
+            print("Payment[%s] execute successfully" % (self.payment.id))
+        else:
+            print(self.payment.error)
             raise UnableToTakePayment()
 
         # Record payment source and event
         source_type, is_created = SourceType.objects.get_or_create(
             name='PayPal')
         source = Source(source_type=source_type,
-                        currency=confirm_txn.currency,
-                        amount_allocated=confirm_txn.amount,
-                        amount_debited=confirm_txn.amount)
+                        # currency=confirm_txn.currency,
+                        currency="USD",
+                        # amount_allocated=confirm_txn.amount,
+                        amount_allocated=self.payment['transactions'][0]['amount']['total'],
+                        # amount_debited=confirm_txn.amount)
+                        amount_debited=self.payment['transactions'][0]['amount']['total'])
         self.add_payment_source(source)
-        self.add_payment_event('Settled', confirm_txn.amount,
-                               reference=confirm_txn.correlation_id)
+        # self.add_payment_event('Settled', confirm_txn.amount,
+        #                        reference=confirm_txn.correlation_id)
+        self.add_payment_event('Settled', self.payment['transactions'][0]['amount']['total'], reference="ID")
 
     def get_shipping_address(self, basket):
         """
@@ -343,7 +358,8 @@ class SuccessResponseView(PaymentDetailsView):
         the data returned by PayPal.
         """
         # Determine names - PayPal uses a single field
-        ship_to_name = self.txn.value('PAYMENTREQUEST_0_SHIPTONAME')
+        ship_to_name = self.payment['payer']['payer_info']['shipping_address']['recipient_name']
+        # self.txn.value('PAYMENTREQUEST_0_SHIPTONAME')
         if ship_to_name is None:
             return None
         first_name = last_name = ''
@@ -353,15 +369,42 @@ class SuccessResponseView(PaymentDetailsView):
         elif len(parts) > 1:
             first_name = parts[0]
             last_name = " ".join(parts[1:])
+
+        address = self.payment['payer']['payer_info']['shipping_address']
+        try:
+            line1 = address['line1']
+        except Exception as e:
+            line1 = ""
+        try:
+            line2 = address['line2']
+        except Exception as e:
+            line2 = ''
+        try:
+            city = address['city']
+        except Exception as e:
+            city = ''
+        try:
+            state = address['state']
+        except Exception as e:
+            raise
+        try:
+            postcode = address['postal_code']
+        except Exception as e:
+            postcode = ''
+        try:
+            country = address['country_code']
+        except Exception as e:
+            raise
+
         return ShippingAddress(
             first_name=first_name,
             last_name=last_name,
-            line1=self.txn.value('PAYMENTREQUEST_0_SHIPTOSTREET'),
-            line2=self.txn.value('PAYMENTREQUEST_0_SHIPTOSTREET2', default=""),
-            line4=self.txn.value('PAYMENTREQUEST_0_SHIPTOCITY', default=""),
-            state=self.txn.value('PAYMENTREQUEST_0_SHIPTOSTATE', default=""),
-            postcode=self.txn.value('PAYMENTREQUEST_0_SHIPTOZIP', default=""),
-            country=Country.objects.get(iso_3166_1_a2=self.txn.value('PAYMENTREQUEST_0_SHIPTOCOUNTRYCODE'))
+            line1 = line1,
+            line2 = line2,
+            line4=city,
+            state=state,
+            postcode=postcode,
+            country=Country.objects.get(iso_3166_1_a2=country)
         )
 
     def _get_shipping_method_by_name(self, name, basket, shipping_address=None):
@@ -380,11 +423,13 @@ class SuccessResponseView(PaymentDetailsView):
             return NoShippingRequired()
 
         # Instantiate a new FixedPrice shipping method instance
-        charge_incl_tax = D(self.txn.value('PAYMENTREQUEST_0_SHIPPINGAMT'))
+        # charge_incl_tax = D(self.txn.value('PAYMENTREQUEST_0_SHIPPINGAMT'))
+        charge_incl_tax = D(0.0)
 
         # Assume no tax for now
         charge_excl_tax = charge_incl_tax
-        name = self.txn.value('SHIPPINGOPTIONNAME')
+        # name = self.txn.value('SHIPPINGOPTIONNAME')
+        name = "Please See PayPal"
 
         session_method = super(SuccessResponseView, self).get_shipping_method(
             basket, shipping_address, **kwargs)
